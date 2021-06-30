@@ -1,0 +1,477 @@
+---
+title: "Integrated families project.v3.0.rmd"
+output: html_notebook
+---
+```{r}
+#This project requires 4 plugins, which can be installed with this code:
+install.packages("odbc")
+install.packages("DBI")
+install.packages("openxlsx")
+install.packages("tidyverse")
+```
+
+```{r}
+#Loading libraries. After the packages above are installed, they need to be loaded. They only need to be installed on a computer once, but they need to be loaded every time RStudio is opened.
+#The memory.limit function was required on the computer I used to increase the memory size so that large tables could be loaded. It may not be needed in all cases.
+library(odbc)
+library(DBI)
+library(openxlsx)
+library(tidyverse)
+memory.limit(size=56000)
+```
+
+```{r}
+#This code connects to the HistoTrac database. The computer RStudio is running on needs to have access to HistoTrac, and the settings for your particular HistoTrac configuration may be different.
+
+# Connecting to the HistoTrac database
+con <- dbConnect(odbc::odbc(), "Histotrac", timeout = 10)
+
+#Pulling a list of available tables in HistoTrac and adding it to "HTtableList"
+(HTtableList <- dbListTables(con) %>% as_tibble)
+
+#This will show all of the tables in the HistoTrac database. Not all of them are used, and only a few are required to search for families.
+```
+#The following code chunks will extract each of the necessary tables from HistoTrac, load them into R in the computer's memory, and then write them to a csv file in the active directory.
+```{r}
+#Extract and save Sample table. Use as a template for extracting and saving tables; just change the table names in the second and third lines of code. This uses the direct extraction code. If this doesn't work, use the error-correcting code based on the "Patient" table.
+con <- dbConnect(odbc::odbc(), "HistoTrac", timeout = 10)
+(dtSample <- dbReadTable(con, "Sample") %>% as_tibble)
+#The code below saves the table in "rds" format, an R format that preserves the table structure, and results in smaller files than "csv.gz." The only limitation is the rds file can only be opened in R. If for some reason you need to read the files by another system, use the second line of code (remove the "#") to save it as a csv.gz file.
+saveRDS(dtSample, file = "Sample.rds")
+#dtSample %>% write_csv("Sample.csv.gz")
+```
+
+```{r}
+#save RelatedPatient table
+con <- dbConnect(odbc::odbc(), "HistoTrac", timeout = 10)
+(dtRelatedPatient <- dbReadTable(con, "RelatedPatient") %>% as_tibble)
+saveRDS(dtRelatedPatient, file = "RelatedPatient.rds")
+#dtRelatedPatient %>% write_csv("RelatedPatient.csv.gz")
+```
+
+```{r}
+#Extract and save Patient table. The Patient table was difficult to get out, so error-correcting code was used.  
+#This uses the error-correcting code for tables that do not extract easily. Only the last two lines have to be changed to extract and save different tables.
+con <- dbConnect(odbc::odbc(), "HistoTrac", timeout = 10)
+testpull <- function(con, tbnm, rownumber, ls_colnm, sp, ep) {
+  re <- tryCatch({
+    # try to query database based on given start point and end point of column
+    dt <- dbGetQuery(con, paste("SELECT TOP", rownumber, paste0(ls_colnm[sp:ep], collapse = ', '), "FROM", tbnm))
+    return(dt)
+  },
+  error = function(error_message) {
+    return("error")
+  },
+  warning = function(warning_message) {
+    return("warning")
+  }
+  )
+}
+pull <- function(con, tbnm) {
+  # get total row number based on table name
+  rownumber <- dbGetQuery(con, paste("SELECT count(*) FROM", tbnm))[[1]]
+  # get all column names of the table
+  ls_colnm <- c(dbGetQuery(con, paste("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='",tbnm,"'",sep=""))$COLUMN_NAME)
+  # set up variables for iteration
+  colnumber <- length(ls_colnm)
+  mincolnbr <- 1
+  maxcolnbr <- colnumber
+  sp <- mincolnbr
+  ep <- maxcolnbr
+  # initiate an empty dataframe
+  df_total <- setNames(data.frame(matrix(nrow=rownumber, ncol=1)),c("x"))
+  
+  while (dim(df_total)[2] < maxcolnbr) {
+    #print(c(sp,ep))
+    df_test <- testpull(con, tbnm, rownumber, ls_colnm, sp, ep)
+    #print(typeof(df_test))
+    if (typeof(df_test) == "list") {
+      # save successfully pulled data
+      if (c(colnames(df_total))[1] == "x") {
+        df_total <- subset(cbind(df_total, df_test),select=-c(x))
+      }
+      else {
+        df_total <- cbind(df_total, df_test)
+      }
+      if (dim(df_total)[2] < maxcolnbr) {
+        # adjust both start and end points when testpull succeeded
+        sp <- ep + 1
+        ep <- maxcolnbr
+        #print(c(sp, ep))
+      }
+    }
+    else {
+      dbDisconnect(con)
+      con <- dbConnect(odbc::odbc(), "HistoTrac", timeout = 10)
+      # adjust end point when testpull failed
+      ep <- floor(sp-1+((ep-(sp-1))/2))
+      #print(c(sp, ep))
+    }
+  }
+  return(df_total)
+}
+
+(dtPatient <- pull(con, "Patient") %>% as_tibble)
+saveRDS(dtPatient, file = "Patient.rds")
+#dtPatient %>% write_csv("Patient.csv.gz")
+```
+
+```{r}
+#Save PatientCase table
+con <- dbConnect(odbc::odbc(), "HistoTrac", timeout = 10)
+testpull <- function(con, tbnm, rownumber, ls_colnm, sp, ep) {
+  re <- tryCatch({
+    # try to query database based on given start point and end point of column
+    dt <- dbGetQuery(con, paste("SELECT TOP", rownumber, paste0(ls_colnm[sp:ep], collapse = ', '), "FROM", tbnm))
+    return(dt)
+  },
+  error = function(error_message) {
+    return("error")
+  },
+  warning = function(warning_message) {
+    return("warning")
+  }
+  )
+}
+pull <- function(con, tbnm) {
+  # get total row number based on table name
+  rownumber <- dbGetQuery(con, paste("SELECT count(*) FROM", tbnm))[[1]]
+  # get all column names of the table
+  ls_colnm <- c(dbGetQuery(con, paste("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='",tbnm,"'",sep=""))$COLUMN_NAME)
+  # set up variables for iteration
+  colnumber <- length(ls_colnm)
+  mincolnbr <- 1
+  maxcolnbr <- colnumber
+  sp <- mincolnbr
+  ep <- maxcolnbr
+  # initiate an empty dataframe
+  df_total <- setNames(data.frame(matrix(nrow=rownumber, ncol=1)),c("x"))
+  
+  while (dim(df_total)[2] < maxcolnbr) {
+    #print(c(sp,ep))
+    df_test <- testpull(con, tbnm, rownumber, ls_colnm, sp, ep)
+    #print(typeof(df_test))
+    if (typeof(df_test) == "list") {
+      # save successfully pulled data
+      if (c(colnames(df_total))[1] == "x") {
+        df_total <- subset(cbind(df_total, df_test),select=-c(x))
+      }
+      else {
+        df_total <- cbind(df_total, df_test)
+      }
+      if (dim(df_total)[2] < maxcolnbr) {
+        # adjust both start and end points when testpull succeeded
+        sp <- ep + 1
+        ep <- maxcolnbr
+        #print(c(sp, ep))
+      }
+    }
+    else {
+      dbDisconnect(con)
+      con <- dbConnect(odbc::odbc(), "HistoTrac", timeout = 10)
+      # adjust end point when testpull failed
+      ep <- floor(sp-1+((ep-(sp-1))/2))
+      #print(c(sp, ep))
+    }
+  }
+  return(df_total)
+}
+
+(dtPatientCase <- pull(con, "PatientCase") %>% as_tibble)
+saveRDS(dtPatientCase, file = "PatientCase.rds")
+#dtPatientCase %>% write_csv("PatientCase.csv.gz")
+```
+
+```{r}
+#Extract Test table. The Test table had similar problems, and so the error-correcting code was used. This is one of the largest tables, and may take a while to extract.
+con <- dbConnect(odbc::odbc(), "HistoTrac", timeout = 10)
+testpull <- function(con, tbnm, rownumber, ls_colnm, sp, ep) {
+  re <- tryCatch({
+    # try to query database based on given start point and end point of column
+    dt <- dbGetQuery(con, paste("SELECT TOP", rownumber, paste0(ls_colnm[sp:ep], collapse = ', '), "FROM", tbnm))
+    return(dt)
+  },
+  error = function(error_message) {
+    return("error")
+  },
+  warning = function(warning_message) {
+    return("warning")
+  }
+  )
+}
+pull <- function(con, tbnm) {
+  # get total row number based on table name
+  rownumber <- dbGetQuery(con, paste("SELECT count(*) FROM", tbnm))[[1]]
+  # get all column names of the table
+  ls_colnm <- c(dbGetQuery(con, paste("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='",tbnm,"'",sep=""))$COLUMN_NAME)
+  # set up variables for iteration
+  colnumber <- length(ls_colnm)
+  mincolnbr <- 1
+  maxcolnbr <- colnumber
+  sp <- mincolnbr
+  ep <- maxcolnbr
+  # initiate an empty dataframe
+  df_total <- setNames(data.frame(matrix(nrow=rownumber, ncol=1)),c("x"))
+  
+  while (dim(df_total)[2] < maxcolnbr) {
+    #print(c(sp,ep))
+    df_test <- testpull(con, tbnm, rownumber, ls_colnm, sp, ep)
+    #print(typeof(df_test))
+    if (typeof(df_test) == "list") {
+      # save successfully pulled data
+      if (c(colnames(df_total))[1] == "x") {
+        df_total <- subset(cbind(df_total, df_test),select=-c(x))
+      }
+      else {
+        df_total <- cbind(df_total, df_test)
+      }
+      if (dim(df_total)[2] < maxcolnbr) {
+        # adjust both start and end points when testpull succeeded
+        sp <- ep + 1
+        ep <- maxcolnbr
+        #print(c(sp, ep))
+      }
+    }
+    else {
+      dbDisconnect(con)
+      con <- dbConnect(odbc::odbc(), "HistoTrac", timeout = 10)
+      # adjust end point when testpull failed
+      ep <- floor(sp-1+((ep-(sp-1))/2))
+      #print(c(sp, ep))
+    }
+  }
+  return(df_total)
+}
+
+(dtTest <- pull(con, "Test") %>% as_tibble)
+saveRDS(dtTest, file = "Test.rds")
+#dtTest %>% write_csv("Test.csv.gz")
+```
+#Now a copy of the necessary HistoTrac tables are saved as rds files. The next section loads these back into R, and manipulates the data to find families. You can start here if you have the tables saved, and don't need to interface with HistoTrac.
+```{r}
+#This pulls in the Patient, PatientCase, RelatedPatient, Sample and Test tables from HistoTrac. The mutate function ensures all blank or missing values are recorded as "NA" by R, which will be useful for wrangling the data.
+(total_patient_table <- readRDS(file = "Patient.rds") %>% mutate(across(where(is.character), ~na_if(., ""))))
+(PatientCase <- readRDS(file = "PatientCase.rds") %>% mutate(across(where(is.character), ~na_if(., ""))))
+(RelatedPatient <- readRDS(file = "RelatedPatient.rds") %>% mutate(across(where(is.character), ~na_if(., ""))))
+(Sample <- readRDS(file = "Sample.rds") %>% mutate(across(where(is.character), ~na_if(., ""))))
+(Test <- readRDS(file = "Test.rds") %>% mutate(across(where(is.character), ~na_if(., ""))))
+```
+
+```{r}
+#Patients and donors are kept in the same "Patient" table. This separates patients to a different table, which makes the subsequent steps easier. Patient/donor is in column "PatientTypeCd"
+(patients <- filter(total_patient_table, PatientTypeCd == "Patient"))
+```
+
+```{r}
+#This simplifies the patient table by selecting certain columns and putting them in a new table called "simple_patients." 
+(simple_patients <- (select(patients, PatientId, HospitalID, firstnm, lastnm, DOB, categoryCd, GenderCd, RaceCd)))
+```
+
+```{r}
+#This links patients with the PatientCase table, then the RelatedPatient table, then back to the total_patient_table. This will add new rows whenever a patient has a donor.  
+(linked_cases <- simple_patients %>%
+    left_join(PatientCase, by = "PatientId") %>%
+    left_join(RelatedPatient, by = "CaseId") %>%
+    left_join(total_patient_table, by= c("RelatedPatientID" = "PatientId"))
+    )
+
+#This gives you a list of all of the different types of donors in HistoTrac. This is important for the next steps, where you will search for families.
+count(linked_cases, RelationshipTypeCd)
+```
+
+```{r}
+#Using the table above to determine all of the different types of donors we had, I created a new table that only kept the types of patient/donors that would make a nuclear family. This will have to be changed, based on what you have in your HistoTrac database.
+
+#This filters to keep only nuclear families, as only the relationships below make up nuclear families.
+(linked_families <-
+    linked_cases %>%
+    filter(RelationshipTypeCd == "DAUGHTER"|
+           RelationshipTypeCd == "Daughter"|
+           RelationshipTypeCd == "FATHER" |
+           RelationshipTypeCd == "Father"|
+           RelationshipTypeCd == "HUSBAND" |
+           RelationshipTypeCd == "Husband"|
+           RelationshipTypeCd == "MOTHER" |
+           RelationshipTypeCd == "Mother"|
+           RelationshipTypeCd == "PT" |
+           RelationshipTypeCd == "PT."|
+           RelationshipTypeCd == "Sibling" |
+           RelationshipTypeCd == "SIBLING"|
+           RelationshipTypeCd == "SON" |
+           RelationshipTypeCd == "Son"|
+           RelationshipTypeCd == "WIFE" |
+           RelationshipTypeCd == "Wife"|
+           RelationshipTypeCd == "Brother" |
+           RelationshipTypeCd == "BROTHER"|
+           RelationshipTypeCd == "Fiance" |
+           RelationshipTypeCd == "FIANCE"|
+           RelationshipTypeCd == "SISTER"|
+           RelationshipTypeCd == "Sister")
+  
+ #This simplifies the table.
+  %>% select(PatientId:lastnm.x, RaceCd.x, PatientID:RelationshipTypeCd, firstnm.y, lastnm.y, mA1Cd:mDPB12cd)
+  
+#Our HistoTrac database sometimes had multiple types of donor relationships, which meant we sometimes had patients listed as "PT" and "PT." The code below changes all "PT." to "PT" to make sure all families are included. This may not be required for your database.
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "PT.", "PT"))
+
+#This removes duplicate patient listings
+  %>% distinct(PatientID, RelatedPatientID, .keep_all = TRUE)
+  
+#This changes RelationshipTypeCd to simplify relationships.The idea here is to change all donors to be either "Child, Spouse, Parent, or Sibling," which makes searching in subsequent steps much easier.
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "DAUGHTER", "Child")) 
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "Daughter", "Child"))
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "FATHER", "Parent"))
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "Father", "Parent"))
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "HUSBAND", "Spouse"))
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "Husband", "Spouse"))
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "MOTHER", "Parent"))
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "Mother", "Parent"))
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "SON", "Child"))
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "Son", "Child"))
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "WIFE", "Spouse"))
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "Wife", "Spouse"))
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "Brother", "Sibling"))
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "BROTHER", "Sibling"))
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "Fiance", "Spouse"))
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "FIANCE", "Spouse"))
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "SISTER", "Sibling"))
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "Sister", "Sibling"))
+)
+```
+#The next set of code links the families table to the test table so we can determine which patients and donors have been tested by NGS. Families are then filtered for those that meet the requirements of the IHIW project.
+```{r}
+#Filter for NGS-tested samples
+
+#This links families with the Sample table, then the Test table. 
+(families_NGS <- 
+   linked_families %>%
+   left_join(Sample, c("RelatedPatientID" = "PatientId"))
+   %>% select(PatientId:SampleID, SampleNbr)
+   %>% left_join(Test, c("SampleID" = "SampleId"))
+#Filter for NGS tested samples. You may have a different way to determine who was tested by NGS.
+   %>% filter(TestTypeCd == "HR NGS")
+   %>% distinct(RelatedPatientID, .keep_all = TRUE)
+#Rename columns to make final table more user-friendly
+   %>% rename(Patient.HospitalID = HospitalID.x)
+   %>% rename(Patient.firstnm = firstnm.x)
+   %>% rename(Patient.lastnm = lastnm.x)
+   %>% rename(Patient.Race = RaceCd.x)
+   %>% rename(Case.firstnm = firstnm.y)
+   %>% rename(Case.lastnm = lastnm.y)
+#Rearrange columns
+  %>% select(PatientID, Patient.HospitalID:Patient.Race, RelatedPatientID:Case.lastnm, SampleID, SampleNbr, mA1Cd.x:mDPB12cd)
+    )
+```
+
+```{r}
+#This is where the real magic happens. I essentially realized that there are four types of families that will satisfy the requirements for the IHIW project: "Patient, Spouse and Child," "Patient and 2 children," "Patient and 2 Parents," or "Patient, Parent, and Sibling." The code below groups the families, and then keeps only those that match one of the four criteria.
+
+#Find families when patient is parent, including spouse
+(families_NGSa <- families_NGS 
+  %>% group_by(PatientID) 
+  %>% filter(all(c("PT","Spouse", "Child") %in% RelationshipTypeCd))
+  #The line above filtered for all families that met the PT, Spouse, Child requirement, but also included all other family members. We don't want to keep these, though, as the parent of the patient for these families is actually the grandparent, and the brother of the patient would be an uncle, and therefore not part of the nuclear family. The line below just keeps the three types that make up the nuclear family.
+  %>% filter(RelationshipTypeCd == "PT" | RelationshipTypeCd == "Spouse" | RelationshipTypeCd == "Child")
+  #Rename all members to parent or child, based on membership in the nuclear family.
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "PT", "Parent")) 
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "Spouse", "Parent")) 
+  )
+
+#Find families when patient is parent, no spouse
+(families_NGSb <- families_NGS 
+  %>% group_by(PatientID)
+  %>% filter(all(c("PT", "Child") %in% RelationshipTypeCd))
+  %>% filter(RelationshipTypeCd == "PT"|
+            RelationshipTypeCd == "Child")
+  %>% filter(n() >=3)
+  #Rename all members to parent or child, based on membership in the nuclear family.
+  %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "PT", "Parent"))
+  )
+
+#Find families when patient is child with 2 parents, no siblings
+(families_NGSc <- families_NGS 
+    %>% group_by(PatientID)
+    %>% filter(all(c("PT", "Parent") %in% RelationshipTypeCd))
+    %>% filter(RelationshipTypeCd == "PT"|
+            RelationshipTypeCd == "Parent")
+    %>% filter(n() >=3)
+    #Rename all members to parent or child, based on membership in the nuclear family.
+    %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "PT", "Child")) 
+    #%>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "Sibling", "Child")) 
+    )
+
+#Find families when patient is child, including a sibling and a parent
+(families_NGSd <- families_NGS 
+    %>% group_by(PatientID) 
+    %>% filter(all(c("PT", "Parent", "Sibling") %in% RelationshipTypeCd))
+    #The line above filtered for all families that met the PT, Parent, Sibling requirement, but also included all other family members. We don't want to keep these, though, as the child of the patient for these families is actually the grandchild, and the wife of the patient would be the daughter-in-law, and therefore not part of the nuclear family. The line below just keeps the three types that make up the nuclear family.
+    %>% filter(RelationshipTypeCd == "PT" | RelationshipTypeCd == "Parent" | RelationshipTypeCd == "Sibling")
+    #Rename all members to parent or child, based on membership in the nuclear family.
+    %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "PT", "Child")) 
+    %>% mutate(RelationshipTypeCd = replace(RelationshipTypeCd, RelationshipTypeCd == "Sibling", "Child"))
+              )
+
+#Join all the tables into one
+(families <- bind_rows(families_NGSa, families_NGSb, families_NGSc, families_NGSd)
+    #Remove all the duplicate entries, arrange by patient so families show up in groups
+    %>% distinct(RelatedPatientID, RelationshipTypeCd, .keep_all = TRUE)
+    %>% arrange(PatientID)
+    #Replace missing typing values in the second column (homozygous typings) with values from the first column
+    %>% mutate(mA2Cd.x = coalesce(mA2Cd.x, mA1Cd.x))  
+    %>% mutate(mB2Cd.x = coalesce(mB2Cd.x, mB1Cd.x)) 
+    %>% mutate(mC2Cd.x = coalesce(mC2Cd.x, mC1Cd.x)) 
+    %>% mutate(mDRB12Cd.x = coalesce(mDRB12Cd.x, mDRB11Cd.x)) 
+    %>% mutate(mDQA12Cd.x = coalesce(mDQA12Cd.x, mDQA11Cd.x)) 
+    %>% mutate(mDQB12cd.x = coalesce(mDQB12cd.x, mDQB11cd.x)) 
+    %>% mutate(mDPA12Cd = coalesce(mDPA12Cd, mDPA11Cd)) 
+    %>% mutate(mDPB12cd = coalesce(mDPB12cd, mDPB11cd))
+    )
+
+#Note that we had one family of 3 generations, so that the patient was both a child and a parent when our final list was generated. If you have cases like this, take care in uploading the results.
+
+#We now have a list of all families that have the right number of members, and have been tested by NGS. The last thing that needs to be done is filter out families with only one parent and multiple children who are all HLA identical. That will be performed in the next section.  
+```
+
+```{r}
+#For families with only 1 parent, we need to have 2 HLA non-identical children. 
+
+#Find single parents
+(single_parents <- families 
+    %>% group_by(PatientID)
+    %>% filter(RelationshipTypeCd == "Parent")
+    %>% filter(n() == 1)
+    )
+
+#This separates the one-parent families so we can see if they have multiple HLA non-identical children.
+(one_parent_families <- families %>% semi_join(single_parents, by = "PatientID"))
+
+#This separates the two-parent families so we can join them later with the one-parent families after screening for multiple HLA non-identical children.
+(two_parent_families <- families %>% anti_join(single_parents, by = "PatientID"))
+
+#Filter for children
+(HLA_nonidentical_children <- one_parent_families 
+    %>% filter(RelationshipTypeCd == "Child")
+    #Keep only children with distinct typing at A, B, C, DRB1, DQA1, DQB1, DPA1, and DPB1. This is still grouped on PatientID, so it  looks for distinct children in families.
+    %>% distinct(mA1Cd.x, mA2Cd.x, mB1Cd.x, mB2Cd.x, mC1Cd.x, mC2Cd.x, mDRB11Cd.x, mDRB12Cd.x, mDQA11Cd.x, mDQA12Cd.x, mDQB11cd.x, mDQB12cd.x, mDPA11Cd, mDPA12Cd, mDPB11cd, mDPB12cd, .keep_all = T)
+    #Filtering for 2 or more removes all of the families that do not have multiple HLA non-identical children.
+    %>% filter(n() >= 2)
+    )
+
+#Remove single-parent families without 2 HLA non-identical children.
+(one_parent_families_filtered <- one_parent_families %>% semi_join(HLA_nonidentical_children, by = "PatientID", .keep_all = T))
+
+#Rejoin the two-parent families with the filtered one-parent families.
+(final_families <- bind_rows(two_parent_families, one_parent_families_filtered)
+    %>% arrange(PatientID)
+    )
+
+#There you go, you have a list of all families that meet the IHIW requirements. You can save this table to a file, either csv or Excel, by removing the "#" from the lines below. 
+
+#write_excel_csv(families, "families.txt")
+#write.xlsx(final_families, file = "Final_families.xlsx", overwrite = T)
+```
+
+```{r}
+#This will count all of the families found (that number will be the number of rows; the "n" value is the number of members in each family). 
+count(final_families, PatientID, sort = T)
+```
