@@ -1,6 +1,10 @@
 # R-HistoTrac-IHIW-Families
 R code for IHIW families project identification from HistoTrac
 
+Version 4.0 code changes:
+1.	Code to extract the tables from HistoTrac was revised. The error-correcting code is now used once at the beginning, and all of the table extractions use the error-correcting code. This makes the code cleaner, and makes it easier to extract all of the tables. 
+2.	Note that the code requires the computer to have a connection to your HistoTrac server with a connection named “HistoTrac.” Please see Powerpoint file, which contains instructions on how to create a connection to the HistoTrac server on a Windows computer.
+
 Version 3.0 code changes:
 1.	Tables extracted from HistoTrac SQL server are saved as RDS files, which preserves data structure. Saving as csv.gz files remains as an option.
 2.	Tables are loaded back into R by reading the RDS files, and code ensures all blank values are recorded as “NA.” 
